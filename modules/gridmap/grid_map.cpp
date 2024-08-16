@@ -66,28 +66,45 @@ bool GridMap::_set(const StringName &p_name, const Variant &p_value) {
 		clear_baked_meshes();
 
 		Array meshes = p_value;
+		Ref<Mesh> dummy = meshes[meshes.size() - 1];
 
-		for (int i = 0; i < meshes.size(); i++) {
-			Array pair = meshes[i];
-			BakedMesh bm;
-			bm.mesh = pair[0];
-			bm.item = pair[1];
-			ERR_CONTINUE(!bm.mesh.is_valid());
-			bm.instance = RS::get_singleton()->instance_create();
-			RS::get_singleton()->instance_set_base(bm.instance, bm.mesh->get_rid());
-			RS::get_singleton()->instance_attach_object_instance_id(bm.instance, get_instance_id());
-			if (mesh_library.is_valid()) {
-				RS::get_singleton()->instance_set_layer_mask(bm.instance, mesh_library->get_item_render_layers(bm.item));
+		// Check if new or old format
+		if (dummy.is_valid() && dummy->get_surface_count() == 0) {
+			// New format, so prceed with loading...
+			for (int i = 0; i < meshes.size() - 1; i++) {
+				BakedMesh bm;
+				bm.mesh = meshes[i];
+				bm.item = -1;
+				ERR_CONTINUE(!bm.mesh.is_valid());
+				bm.instance = RS::get_singleton()->instance_create();
+				RS::get_singleton()->instance_set_base(bm.instance, bm.mesh->get_rid());
+				RS::get_singleton()->instance_attach_object_instance_id(bm.instance, get_instance_id());
+				if (is_inside_tree()) {
+					RS::get_singleton()->instance_set_scenario(bm.instance, get_world_3d()->get_scenario());
+					RS::get_singleton()->instance_set_transform(bm.instance, get_global_transform());
+				}
+				baked_meshes.push_back(bm);
 			}
-			if (is_inside_tree()) {
-				RS::get_singleton()->instance_set_scenario(bm.instance, get_world_3d()->get_scenario());
-				RS::get_singleton()->instance_set_transform(bm.instance, get_global_transform());
-			}
-			baked_meshes.push_back(bm);
+			_recreate_octant_data();
+		} else {
+			// Old format, so need rebake
+			make_baked_meshes(true);
 		}
 
-		_recreate_octant_data();
+	} else if (name == "baked_meshes_items") {
 
+		Array baked_meshes_items = p_value;
+
+		if (baked_meshes_items.size() == baked_meshes.size() && mesh_library.is_valid()) {
+			int i = 0;
+			for (BakedMesh& bm : baked_meshes) {
+				if (bm.item < 0) {
+					bm.item = baked_meshes_items[i];
+					RS::get_singleton()->instance_set_layer_mask(bm.instance, mesh_library->get_item_render_layers(bm.item));
+				}
+				i++;
+			}
+		}
 	} else {
 		return false;
 	}
@@ -118,15 +135,23 @@ bool GridMap::_get(const StringName &p_name, Variant &r_ret) const {
 		r_ret = d;
 	} else if (name == "baked_meshes") {
 		Array ret;
-		ret.resize(baked_meshes.size());
+		ret.resize(baked_meshes.size() + 1);
 		for (int i = 0; i < baked_meshes.size(); i++) {
-			Array pair;
-			pair.append(baked_meshes[i].mesh);
-			pair.append(baked_meshes[i].item);
-			ret[i] = pair;
+			ret[i] = baked_meshes[i].mesh;
 		}
+		// Add empty ArrayMesh at the end to recognize new format and do not break scene loading in old versions
+		Ref<ArrayMesh> dummy;
+		dummy.instantiate();
+		ret[baked_meshes.size()] = dummy;
 		r_ret = ret;
 
+	} else if (name == "baked_meshes_items") {
+		Array ret;
+		ret.resize(baked_meshes.size());
+		for (int i = 0; i < baked_meshes.size(); i++) {
+			ret[i] = baked_meshes[i].item;
+		}
+		r_ret = ret;
 	} else {
 		return false;
 	}
